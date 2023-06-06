@@ -11,14 +11,15 @@ const codetext = document.querySelector('#codetext');
 const maxsteps = document.querySelector('#maxsteps');
 const ramstart = document.querySelector('#ramstart');
 const ramshowmode = document.querySelector('#ramshowmode');
-codetext.addEventListener('keydown', onCodeTextKey);
 document.querySelector("#run").addEventListener("mousedown", () => dispatchStep("run"));
 document.querySelector("#prev").addEventListener("mousedown", () => dispatchStep("prev"));
 document.querySelector("#next").addEventListener("mousedown", () => dispatchStep("next"));
+document.querySelector("#runtocursor").addEventListener("mousedown", () => dispatchStep("runtocursor"));
 document.querySelector("#setsample").addEventListener("mousedown", onSetSample);
 document.querySelector("#showramstart").addEventListener("mousedown", onShowRamStart);
 document.querySelector("#ramstart").addEventListener("keyup", onRamStartKey);
 document.querySelector("#ramshowmode").addEventListener("change", onRamShowMode);
+
 
 let codeSamples = [
   {'name': '', 'code': ''},
@@ -232,7 +233,7 @@ function loadUiState() {
   ramstart.value = "0000";
 
   if (state) {
-    codetext.value = state.codetext;
+    editor.setValue(state.codetext, 1);
     if (state.maxsteps !== undefined) {
       maxsteps.value = state.maxsteps;
     }
@@ -246,7 +247,7 @@ function loadUiState() {
 
 function saveUiState() {
   let state = {
-    'codetext': codetext.value,
+    'codetext': editor.getValue(),
     'maxsteps': maxsteps.value
   };
   localStorage.setItem(STORAGE_ID, JSON.stringify(state));
@@ -294,6 +295,9 @@ function dispatchStep(event) {
     case "prev":
       onPrevStep();
       break;
+    case "runtocursor":
+      onRunCode(editor.getCursorPosition().row);
+      break; 
     }
   } catch (e) {
     if (e instanceof js8080sim.ParseError ||
@@ -313,17 +317,19 @@ function onNextStep() {
 }
 
 function onPrevStep() {
-  let step = parseInt(maxsteps.value);
-  maxsteps.value = step - 1;
-  onRunCode();
+  if (maxsteps.value > 0) {
+    let step = parseInt(maxsteps.value);
+    maxsteps.value = step - 1;
+    onRunCode();
+  }
 }
 
-function onRunCode() {
+function onRunCode(breakpoint) {
   saveUiState();
 
-  let prog = codetext.value;
+  let prog = editor.getValue();
 
-  let [state, mem, labelToAddr] = runProg(prog, parseInt(maxsteps.value));
+  let [state, mem, labelToAddr] = runProg(prog, parseInt(maxsteps.value), breakpoint);
   memFromLastRun = mem;
 
   // Populate CPU state / registers.
@@ -370,40 +376,41 @@ function onRamStartKey(event) {
   }
 }
 
-function onCodeTextKey(event) {
-  if (event.keyCode == 13) {
+//function onCodeTextKey(event) {
+  //if (event.keyCode == 13) {
     // Capture "Enter" to insert spaces similar to the previous line.
-    let pos = codetext.selectionStart;
+    //let pos = codetext.selectionStart;
+//
+    //let prevNewlinePos = pos - 1;
+    //while (prevNewlinePos > 0 &&
+           //codetext.value.charAt(prevNewlinePos) !== '\n') {
+      //prevNewlinePos--;
+    //}
+//
+    //let startLinePos = prevNewlinePos + 1;
+    //while (codetext.value.charAt(startLinePos) === ' ') {
+      //startLinePos++;
+    //}
+//
+    //let numSpaces = startLinePos - prevNewlinePos - 1;
+//
+    //codetext.value = codetext.value.substring(0, pos) +
+                      //'\n' +
+                      //' '.repeat(numSpaces) +
+                      //codetext.value.substring(pos, codetext.value.length);
+    //codetext.selectionStart = pos + numSpaces + 1;
+    //codetext.selectionEnd = pos + numSpaces + 1;
+    //event.stopPropagation();
+    //event.preventDefault();
+  //}
+//}
 
-    let prevNewlinePos = pos - 1;
-    while (prevNewlinePos > 0 &&
-           codetext.value.charAt(prevNewlinePos) !== '\n') {
-      prevNewlinePos--;
-    }
-
-    let startLinePos = prevNewlinePos + 1;
-    while (codetext.value.charAt(startLinePos) === ' ') {
-      startLinePos++;
-    }
-
-    let numSpaces = startLinePos - prevNewlinePos - 1;
-
-    codetext.value = codetext.value.substring(0, pos) +
-                      '\n' +
-                      ' '.repeat(numSpaces) +
-                      codetext.value.substring(pos, codetext.value.length);
-    codetext.selectionStart = pos + numSpaces + 1;
-    codetext.selectionEnd = pos + numSpaces + 1;
-    event.stopPropagation();
-    event.preventDefault();
-  }
-}
-
-function runProg(progText, maxSteps) {
+function runProg(progText, maxSteps, breakpoint) {
   let p = new js8080sim.Parser();
   let asm = new js8080sim.Assembler();
   let sourceLines = p.parse(progText);
   let [mem, labelToAddr] = asm.assemble(sourceLines);
+  console.log(sourceLines);
 
   const memoryTo = (addr, value) => {mem[addr] = value;};
   const memoryAt = (addr) => {return mem[addr];};
@@ -413,22 +420,53 @@ function runProg(progText, maxSteps) {
   if (maxSteps === undefined) {
     maxSteps = 50000;
   }
-
+  var breakpc;
+  if (breakpoint) {
+    for (let sl of sourceLines)
+    {
+      if (sl.pos.line - 1 == breakpoint) {
+        breakpc = sl.pc;
+      }
+    }
+  }
+  
   for (let i = 0; i < maxSteps; i++) {
     js8080sim.CPU8080.steps(1);
-
+    
+    if (breakpc == js8080sim.CPU8080.status().pc) {
+      maxsteps.value = i + 1;
+      break;
+    }
+        
     if (js8080sim.CPU8080.status().halted) {
       break;
     }
   }
+  
+  highlightCurrentLine(sourceLines, js8080sim.CPU8080.status().pc);
 
   return [js8080sim.CPU8080.status(), mem, labelToAddr];
 }
 
+function highlightCurrentLine(sourceLines, pc) {
+  for (let sl of sourceLines)
+  {
+    console.log(sl);
+    if (sl.pc === pc && ! sl.label)
+    {
+      editor.moveCursorTo(sl.pos.line - 1, sl.pos.col - 1);
+      editor.clearSelection();
+      return;
+    }
+  }
+}
+
+
+
 function onSetSample() {
   let samples = document.querySelector("#samples");
   let selectedSampleCode = codeSamples[samples.selectedIndex];
-  codetext.value = selectedSampleCode.code.replace(/^\n+/, '');
+  editor.setValue(selectedSampleCode.code.replace(/^\n+/, ''), 1);
 }
 
 function onShowRamStart() {
@@ -461,6 +499,13 @@ function populateRamTable() {
   for (let i = 0; i < 16 * 16; i++) {
     let memIndex = startAddr + i;
     let value = memFromLastRun[memIndex];
+    if (memIndex == js8080sim.CPU8080.status().pc) {
+      ramValues[i].parentElement.style.background = "#ffffc1";
+      ramValues[i].parentElement.style.fontWeight = "bold";
+    } else {
+      ramValues[i].parentElement.style.background = "inherit";
+      ramValues[i].parentElement.style.fontWeight = "normal";
+    }
     ramValues[i].textContent = useAscii ?
       ('.' + formatAscii(value)) :
       formatNum(value, 2);

@@ -70,6 +70,8 @@ class Assembler {
         }
         this.labelToAddr.set(sl.label, curAddr);
       }
+      
+      sl.pc = curAddr;
 
       // Instruction encoding here.
       if (sl.instr !== null) {
